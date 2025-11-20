@@ -1,0 +1,207 @@
+name: AI Code Review - AccountApi Conventions
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  ai-convention-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Check Documentation Files
+        id: check-docs
+        run: |
+          if [ -f "docs/glossary.md" ]; then
+            echo "✅ Glossary found"
+            echo "GLOSSARY_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "⚠️  Warning: docs/glossary.md not found"
+            echo "GLOSSARY_EXISTS=false" >> $GITHUB_ENV
+          fi
+          
+          if [ -f "docs/naming-conventions.md" ]; then
+            echo "✅ Naming conventions found"
+            echo "CONVENTIONS_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "⚠️  Warning: docs/naming-conventions.md not found"
+            echo "CONVENTIONS_EXISTS=false" >> $GITHUB_ENV
+          fi
+      
+      - name: Get PR Diff
+        id: diff
+        run: |
+          # Get the diff between base and head
+          git diff origin/${{ github.base_ref }}...HEAD > pr-diff.txt
+          
+          # Check size
+          DIFF_SIZE=$(wc -c < pr-diff.txt)
+          echo "Diff size: $DIFF_SIZE bytes"
+          
+          # Truncate if too large (Claude has token limits)
+          if [ $DIFF_SIZE -gt 40000 ]; then
+            echo "⚠️  Diff too large, truncating to 40KB..."
+            head -c 40000 pr-diff.txt > pr-diff-truncated.txt
+            mv pr-diff-truncated.txt pr-diff.txt
+            echo "DIFF_TRUNCATED=true" >> $GITHUB_ENV
+          else
+            echo "DIFF_TRUNCATED=false" >> $GITHUB_ENV
+          fi
+          
+          echo "✅ Diff captured"
+      
+      - name: Prepare Review Request
+        run: |
+          echo "Preparing AI review request..."
+          
+          # Copy PrepareReview project to working directory
+          cp -r .github/scripts/PrepareReview ./PrepareReview-Work
+          cd PrepareReview-Work
+          
+          # Use Python for reliable multiline string replacement
+          python3 << 'PYTHON'
+import sys
+import os
+
+# Read the template
+with open('Program.cs', 'r') as f:
+    template = f.read()
+
+# Read replacement content
+with open('../pr-diff.txt', 'r') as f:
+    diff_content = f.read()
+
+glossary_content = ""
+if os.path.exists('../docs/glossary.md'):
+    with open('../docs/glossary.md', 'r') as f:
+        glossary_content = f.read()
+
+conventions_content = ""
+if os.path.exists('../docs/naming-conventions.md'):
+    with open('../docs/naming-conventions.md', 'r') as f:
+        conventions_content = f.read()
+
+# Escape content for C# verbatim strings
+# Replace " with "" for verbatim string escaping
+diff_escaped = diff_content.replace('"', '""')
+glossary_escaped = glossary_content.replace('"', '""')
+conventions_escaped = conventions_content.replace('"', '""')
+
+# Replace placeholders
+result = template.replace('{{DIFF}}', diff_escaped)
+result = result.replace('{{GLOSSARY}}', glossary_escaped)
+result = result.replace('{{CONVENTIONS}}', conventions_escaped)
+
+# Write the modified file
+with open('Program.cs', 'w') as f:
+    f.write(result)
+
+print("✅ Placeholders replaced successfully")
+PYTHON
+          
+          # Build and run the C# program
+          echo "Building and running PrepareReview..."
+          dotnet run
+          
+          # Move output back
+          mv request.json ../request.json
+          cd ..
+          
+          echo "✅ Review request prepared"
+      
+      - name: Call Claude API
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "Calling Claude API..."
+          
+          # Call Claude API
+          curl -s https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "content-type: application/json" \
+            -H "anthropic-version: 2023-06-01" \
+            -d @request.json > review-response.json
+          
+          # Check if API call succeeded
+          if [ $? -ne 0 ]; then
+            echo "❌ API call failed"
+            exit 1
+          fi
+          
+          echo "✅ API call completed"
+      
+      - name: Extract Review
+        run: |
+          echo "Extracting review from API response..."
+          
+          # Copy ExtractReview project to working directory
+          cp -r .github/scripts/ExtractReview ./ExtractReview-Work
+          cd ExtractReview-Work
+          
+          # Copy the API response
+          cp ../review-response.json ./review-response.json
+          
+          # Build and run
+          echo "Building and running ExtractReview..."
+          dotnet run
+          
+          # Move output back
+          mv review.txt ../review.txt
+          cd ..
+          
+          echo "✅ Review extracted"
+      
+      - name: Post Review Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reviewText = fs.readFileSync('review.txt', 'utf8');
+            
+            // Build the comment
+            let comment = `## 🤖 AI Code Review - AccountApi Conventions\n\n${reviewText}\n\n---\n`;
+            
+            // Add context about what was checked
+            const hasGlossary = process.env.GLOSSARY_EXISTS === 'true';
+            const hasConventions = process.env.CONVENTIONS_EXISTS === 'true';
+            const wasTruncated = process.env.DIFF_TRUNCATED === 'true';
+            
+            if (hasGlossary && hasConventions) {
+              comment += `\n*✅ Reviewed against company glossary and naming conventions*`;
+              comment += `\n- 📖 [View Glossary](../blob/main/docs/glossary.md)`;
+              comment += `\n- 📋 [View Naming Conventions](../blob/main/docs/naming-conventions.md)`;
+            } else {
+              comment += `\n*⚠️  Missing documentation files:*`;
+              if (!hasGlossary) comment += `\n- \`docs/glossary.md\` not found`;
+              if (!hasConventions) comment += `\n- \`docs/naming-conventions.md\` not found`;
+              comment += `\n\nAdd these files to enable convention-aware reviews.`;
+            }
+            
+            if (wasTruncated) {
+              comment += `\n\n*⚠️  Note: Code diff was truncated due to size. Large PRs may have incomplete reviews.*`;
+            }
+            
+            comment += `\n\n*Powered by Claude Sonnet 4.5 via C# scripts*`;
+            
+            // Post the comment
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+            
+            console.log('✅ Review comment posted successfully');
