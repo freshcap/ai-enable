@@ -36,6 +36,13 @@ public class AccountsController : ControllerBase
         return Ok(MapToDto(account));
     }
 
+    [HttpGet("name/{name}")]
+    public async Task<ActionResult<AccountDto>> GetByName(string name)
+    {
+        var res = await _accountService.GetAccountsByName(name);
+        return Ok(res);
+    }
+
     [HttpPost]
     public async Task<ActionResult<AccountDto>> Create(AccountDto accountDto)
     {
