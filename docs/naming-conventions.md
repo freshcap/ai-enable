@@ -410,7 +410,7 @@ public class AccountService
 {
     private readonly IAccountRepository _accountRepository;
     
-    public async Task<Account> GetAccountAsync(string accountId)
+    public async Task<AccountDbo> GetAccountAsync(string accountId)
     {
         return await _accountRepository.GetByIdAsync(accountId);
     }
@@ -425,17 +425,17 @@ public class AccountRepo
     public Account GetAccount(string id)
     {
         var dbo = ReadFromFile();
-        return dbo; // Returns Dbo instead of Account
+        return dbo; // Wrong type returned
     }
 }
 
 // ✅ Correct
 public class AccountRepository : IAccountRepository
 {
-    public async Task<Account> GetByIdAsync(string accountId)
+    public async Task<AccountDbo> GetByIdAsync(string accountId)
     {
         var accountDbo = await ReadFromFileAsync();
-        return MapToAccount(accountDbo); // Converts Dbo to Account
+        return accountDbo; // Returns AccountDbo as expected
     }
 }
 ```

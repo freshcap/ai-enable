@@ -69,50 +69,20 @@ jobs:
           
           # Copy PrepareReview project to working directory
           cp -r .github/scripts/PrepareReview ./PrepareReview-Work
+          
+          # Copy required files to the working directory so C# can read them
+          cp pr-diff.txt PrepareReview-Work/
+          if [ -f "docs/glossary.md" ]; then
+            mkdir -p PrepareReview-Work/docs
+            cp docs/glossary.md PrepareReview-Work/docs/
+          fi
+          if [ -f "docs/naming-conventions.md" ]; then
+            mkdir -p PrepareReview-Work/docs
+            cp docs/naming-conventions.md PrepareReview-Work/docs/
+          fi
+          
+          # Run the C# program (it reads files directly, no replacement needed)
           cd PrepareReview-Work
-          
-          # Use Python for reliable multiline string replacement
-          python3 << 'PYTHON'
-import sys
-import os
-
-# Read the template
-with open('Program.cs', 'r') as f:
-    template = f.read()
-
-# Read replacement content
-with open('../pr-diff.txt', 'r') as f:
-    diff_content = f.read()
-
-glossary_content = ""
-if os.path.exists('../docs/glossary.md'):
-    with open('../docs/glossary.md', 'r') as f:
-        glossary_content = f.read()
-
-conventions_content = ""
-if os.path.exists('../docs/naming-conventions.md'):
-    with open('../docs/naming-conventions.md', 'r') as f:
-        conventions_content = f.read()
-
-# Escape content for C# verbatim strings
-# Replace " with "" for verbatim string escaping
-diff_escaped = diff_content.replace('"', '""')
-glossary_escaped = glossary_content.replace('"', '""')
-conventions_escaped = conventions_content.replace('"', '""')
-
-# Replace placeholders
-result = template.replace('{{DIFF}}', diff_escaped)
-result = result.replace('{{GLOSSARY}}', glossary_escaped)
-result = result.replace('{{CONVENTIONS}}', conventions_escaped)
-
-# Write the modified file
-with open('Program.cs', 'w') as f:
-    f.write(result)
-
-print("✅ Placeholders replaced successfully")
-PYTHON
-          
-          # Build and run the C# program
           echo "Building and running PrepareReview..."
           dotnet run
           

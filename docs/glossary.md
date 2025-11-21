@@ -15,9 +15,8 @@ This document defines business terminology and technical concepts used in the Ac
 - Accounting/financial accounts
 
 **Usage in code**:
-- Entity class: `Account`
-- Database object: `AccountDbo`
-- API contract: `AccountDto`
+- Database object: `AccountDbo` (used internally in Services and Repositories)
+- API contract: `AccountDto` (used for requests/responses)
 - Service: `AccountService`
 - Repository: `AccountRepository`
 - Controller: `AccountController`
@@ -27,7 +26,7 @@ This document defines business terminology and technical concepts used in the Ac
 // ✅ Correct usage
 public class AccountService
 {
-    public async Task<Account> GetAccountAsync(string accountId) { }
+    public async Task<AccountDbo> GetAccountAsync(string accountId) { }
 }
 
 // ❌ Incorrect - don't use Customer
@@ -44,6 +43,7 @@ public class CustomerService // NO - use AccountService
 **Characteristics**:
 - Contains business logic and validation
 - Orchestrates operations across multiple repositories or other services
+- Works with Dbos throughout (receives from repositories, returns to controllers)
 - Does NOT directly access databases (uses Repositories)
 - Stateless - no instance state between method calls
 - Suffix class name with `Service`
@@ -64,10 +64,11 @@ public class AccountService
         _accountRepository = accountRepository;
     }
     
-    public async Task<Account> CreateAccountAsync(CreateAccountDto dto)
+    public async Task<AccountDbo> CreateAccountAsync(AccountDbo accountDbo)
     {
         // Business logic, validation
         // Calls repository for data operations
+        return await _accountRepository.CreateAsync(accountDbo);
     }
 }
 ```
@@ -80,7 +81,7 @@ public class AccountService
 **Characteristics**:
 - Only responsible for data access operations (Create, Read, Update, Delete)
 - Works with Dbo (database object) classes for serialization
-- Returns domain entities (Account, not AccountDbo) to services
+- Returns Dbos to services (e.g., `AccountDbo`)
 - Uses interface pattern: `IAccountRepository` / `AccountRepository`
 - Suffix interface and class with `Repository`
 
@@ -92,9 +93,9 @@ public class AccountService
 ```csharp
 public interface IAccountRepository
 {
-    Task<Account> GetByIdAsync(string accountId);
-    Task<Account> CreateAsync(Account account);
-    Task<Account> UpdateAsync(Account account);
+    Task<AccountDbo> GetByIdAsync(string accountId);
+    Task<AccountDbo> CreateAsync(AccountDbo account);
+    Task<AccountDbo> UpdateAsync(AccountDbo account);
     Task<bool> DeleteAsync(string accountId);
 }
 ```
@@ -198,8 +199,9 @@ public class PaymentClient : IPaymentClient
 **Characteristics**:
 - Suffix class name with `Dbo`
 - Used for serialization/deserialization to/from storage
+- Used throughout the application (in Services, Repositories)
+- Only converted to/from Dtos at the API boundary (in Controllers)
 - May contain storage-specific properties (IDs, timestamps, etc.)
-- Typically mapped to domain entities before returning to services
 
 **Examples**:
 - `AccountDbo` - Account as stored in database
@@ -216,21 +218,31 @@ public class AccountDbo
     public DateTime UpdatedAt { get; set; }
 }
 
-// Repository converts Dbo to domain entity:
-var accountDbo = await ReadFromStorage();
-return MapToAccount(accountDbo); // Returns Account, not AccountDbo
+// Repository returns Dbo:
+public async Task<AccountDbo> GetByIdAsync(string accountId)
+{
+    var accountDbo = await ReadFromStorageAsync();
+    return accountDbo; // Returns AccountDbo
+}
+
+// Service works with Dbo:
+public async Task<AccountDbo> GetAccountAsync(string accountId)
+{
+    return await _accountRepository.GetByIdAsync(accountId);
+}
 ```
 
 ---
 
 ### Dto (Data Transfer Object)
-**Definition**: Classes used for data transfer between API and clients, or between services and external systems.
+**Definition**: Classes used for data transfer between API and clients. Conversion between Dtos and Dbos happens in Controllers.
 
 **Characteristics**:
 - Suffix class name with `Dto`
 - Used for API requests and responses
+- Controllers convert between Dtos (external) and Dbos (internal)
 - May contain validation attributes
-- May differ from domain entities (e.g., exclude sensitive fields, flatten relationships)
+- May differ from Dbos (e.g., exclude sensitive fields, flatten relationships)
 
 **Examples**:
 - `AccountDto` - Account data for API responses
@@ -255,6 +267,21 @@ public class CreateAccountDto
     [EmailAddress]
     public string Email { get; set; }
 }
+
+// Controller converts between Dto and Dbo:
+[HttpPost]
+public async Task<ActionResult<AccountDto>> CreateAccount(CreateAccountDto dto)
+{
+    // Convert Dto to Dbo
+    var accountDbo = MapToDbo(dto);
+    
+    // Service works with Dbo
+    var createdAccount = await _accountService.CreateAccountAsync(accountDbo);
+    
+    // Convert Dbo to Dto for response
+    var responseDto = MapToDto(createdAccount);
+    return Ok(responseDto);
+}
 ```
 
 ---
@@ -267,26 +294,29 @@ Our application follows a 3-tier architecture:
 1. **API Layer** (Controllers)
    - Handles HTTP requests and responses
    - Validates input (model binding, attributes)
+   - Converts between Dtos (external) and Dbos (internal)
    - Calls services for business logic
-   - Returns DTOs to clients
+   - Returns Dtos to clients
 
 2. **Service Layer** (Services)
    - Contains business logic and rules
    - Orchestrates operations across repositories
-   - Transforms between DTOs and domain entities
-   - Returns domain entities
+   - Works with Dbos (no conversion needed)
+   - Returns Dbos to controllers
 
 3. **Repository Layer** (Repositories)
    - Handles all data access
    - Works with Dbos for serialization
-   - Returns domain entities to services
+   - Returns Dbos to services
    - Currently uses static JSON data
 
 **Data Flow**:
 ```
 Client → Controller → Service → Repository → Data Storage
-         (Dto)       (Entity)   (Dbo)
+         (Dto ↔ Dbo) (Dbo)     (Dbo)
 ```
+
+**Key Point**: Dbos are used throughout the internal application (Services, Repositories). Only Controllers convert between Dtos (for API) and Dbos (for internal use).
 
 ---
 
@@ -296,6 +326,7 @@ Client → Controller → Service → Repository → Data Storage
 ❌ Using `User` for paying customers → ✅ Use `Account` (reserve User for system authentication)
 ❌ Non-static Helper classes → ✅ Helpers must be static
 ❌ Services accessing data directly → ✅ Services must use Repositories
-❌ Returning Dbo from Repository → ✅ Return domain entity (Account)
-❌ Using domain entities in API → ✅ Use Dtos in controllers
+❌ Converting Dbo to entity in Repository → ✅ Return Dbo as-is
+❌ Using Dbo in API responses → ✅ Controllers convert Dbo to Dto for API
+❌ Converting Dbo to Dto in Service → ✅ Conversion happens in Controllers only
 ❌ Generic names like `DataHelper` → ✅ Be specific: `JsonHelper`, `ValidationHelper`

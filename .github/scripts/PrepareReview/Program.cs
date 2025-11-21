@@ -1,9 +1,15 @@
 using System.Text.Json;
 
-// These placeholders will be replaced by the GitHub Actions workflow
-var diff = @"{{DIFF}}";
-var glossary = @"{{GLOSSARY}}";
-var conventions = @"{{CONVENTIONS}}";
+// Read content directly from files (no placeholders needed!)
+var diff = File.ReadAllText("pr-diff.txt");
+
+var glossary = File.Exists("docs/glossary.md")
+    ? File.ReadAllText("docs/glossary.md")
+    : "";
+
+var conventions = File.Exists("docs/naming-conventions.md")
+    ? File.ReadAllText("docs/naming-conventions.md")
+    : "";
 
 // Build the prompt based on whether we have company documentation
 string prompt;
