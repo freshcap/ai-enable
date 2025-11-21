@@ -22,6 +22,14 @@ public class AccountService : IAccountService
         return await _accountRepository.GetByIdAsync(id);
     }
 
+    public async Task<List<AccountDto>> GetAccountsByName(string name)
+    {
+        var customers = await _accountRepository.GetByNameAsync(name);
+        var result = customers.Select(x => new AccountDto { 
+            Id = x.Id, FirstName = x.FirstName, LastName = x.LastName, Email = x.Email });
+        return result.ToList();
+    }
+
     public async Task<AccountDbo> CreateAccountAsync(AccountDbo account)
     {
         return await _accountRepository.CreateAsync(account);

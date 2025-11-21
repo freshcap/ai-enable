@@ -57,6 +57,13 @@ public class AccountRepository : IAccountRepository
         return accounts.FirstOrDefault(a => a.Id == id);
     }
 
+    public async Task<IEnumerable<AccountDbo>> GetByNameAsync(string name)
+    {
+        var items = await ReadAccountsAsync();
+        var helper = new NameHelper();
+        return items.Where(x => helper.HasName(x, name));
+    }
+
     public async Task<AccountDbo> CreateAsync(AccountDbo account)
     {
         var accounts = await ReadAccountsAsync();
@@ -102,5 +109,15 @@ public class AccountRepository : IAccountRepository
         accounts.Remove(account);
         await WriteAccountsAsync(accounts);
         return true;
+    }
+}
+
+public class NameHelper
+{
+    public bool HasName(AccountDbo customer, string name)
+    {
+        if (customer.FirstName == name) return true;
+        if (customer.LastName == name) return true;
+        return false;
     }
 }
